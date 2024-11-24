@@ -6,12 +6,23 @@
 //
 
 import SwiftUI
+import Firebase
+import FirebaseCore
 
 @main
-struct denemeSockerIOApp: App {
+struct ChatApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
+    let persistenceController = CoreDataManager.shared
+    
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ChatView(defaultUsername: "Simulator-iPhone")
+                .environment(\.managedObjectContext, persistenceController.viewContext)
         }
     }
 }
+
+
+
+
+

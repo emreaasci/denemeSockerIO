@@ -1,3 +1,13 @@
+//
+//  OnlineUsersView.swift
+//  denemeSockerIO
+//
+//  Created by Emre Aşcı on 22.11.2024.
+//
+
+
+import SwiftUI
+
 // OnlineUsersView.swift
 struct OnlineUsersView: View {
     let users: [String]

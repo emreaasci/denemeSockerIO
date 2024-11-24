@@ -1,3 +1,11 @@
+//
+//  CoreDataManager.swift
+//  denemeSockerIO
+//
+//  Created by Emre Aşcı on 22.11.2024.
+//
+
+
 import CoreData
 
 class CoreDataManager {
@@ -21,26 +29,39 @@ class CoreDataManager {
     
     func saveMessage(_ message: Message, isCurrentUser: Bool) {
         let context = viewContext
-        let messageEntity = MessageEntity(context: context)
-        
-        messageEntity.id = message.id
-        messageEntity.username = message.username
-        messageEntity.toUsername = message.toUsername
-        messageEntity.message = message.message
-        messageEntity.timestamp = message.timestamp
-        messageEntity.status = message.status.rawValue
-        messageEntity.isCurrentUser = isCurrentUser
+        let fetchRequest: NSFetchRequest<MessageEntity> = MessageEntity.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "id == %@", message.id)
         
         do {
+            let existingMessages = try context.fetch(fetchRequest)
+            
+            if let existingMessage = existingMessages.first {
+                // Güncelle
+                existingMessage.status = message.status.rawValue
+            } else {
+                // Yeni oluştur
+                let messageEntity = MessageEntity(context: context)
+                messageEntity.id = message.id
+                messageEntity.username = message.username
+                messageEntity.toUsername = message.toUsername
+                messageEntity.message = message.message
+                messageEntity.timestamp = message.timestamp
+                messageEntity.status = message.status.rawValue
+                messageEntity.isCurrentUser = isCurrentUser
+            }
+            
             try context.save()
         } catch {
             print("Failed to save message: \(error)")
+            context.rollback()
         }
     }
     
     func fetchMessages() -> [Message] {
         let context = viewContext
         let fetchRequest: NSFetchRequest<MessageEntity> = MessageEntity.fetchRequest()
+        let sortDescriptor = NSSortDescriptor(key: "timestamp", ascending: true)
+        fetchRequest.sortDescriptors = [sortDescriptor]
         
         do {
             let messageEntities = try context.fetch(fetchRequest)
@@ -86,6 +107,22 @@ class CoreDataManager {
             try context.save()
         } catch {
             print("Failed to clear messages: \(error)")
+        }
+    }
+    
+    func deleteMessage(id: String) {
+        let context = viewContext
+        let fetchRequest: NSFetchRequest<MessageEntity> = MessageEntity.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "id == %@", id)
+        
+        do {
+            let messages = try context.fetch(fetchRequest)
+            if let messageToDelete = messages.first {
+                context.delete(messageToDelete)
+                try context.save()
+            }
+        } catch {
+            print("Failed to delete message: \(error)")
         }
     }
 }
