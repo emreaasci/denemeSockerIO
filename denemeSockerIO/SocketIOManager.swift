@@ -138,7 +138,16 @@ class SocketIOManager: ObservableObject {
     }
     
     func connect() {
-        socket.connect()
+        if !socket.status.active {
+            socket.connect(withPayload: ["username": currentUsername])
+            
+            // Yeniden bağlanma stratejisi
+            socket.on(clientEvent: .disconnect) { [weak self] _, _ in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                    self?.connect()
+                }
+            }
+        }
     }
     
     func disconnect() {
@@ -168,29 +177,36 @@ class SocketIOManager: ObservableObject {
     }
     
     func reportMessageDelivery(messageId: String, username: String, from: String, completion: @escaping (Bool) -> Void) {
-        // Socket bağlı değilse bağlan
-        if !socket.status.active {
-            connect()
-        }
-        
-        // Mesajın iletildiğini bildir
-        socket.emit("messageDelivered", [
-            "messageId": messageId,
-            "username": username,
-            "from": from
-        ])
-        
-        // Gönderenin mesajını güncelle
-        DispatchQueue.main.async {
-            if let index = self.messages.firstIndex(where: { $0.id == messageId }) {
-                self.messages[index].status = .delivered
-                // CoreData'da güncelle
-                CoreDataManager.shared.updateMessageStatus(messageId: messageId, status: .delivered)
+            // Socket bağlı değilse bağlan
+            if !socket.status.active {
+                socket.connect()
+            }
+            
+            let deliveryData: [String: Any] = [
+                "messageId": messageId,
+                "username": username,
+                "senderName": from
+            ]
+            
+            // İletildi bilgisini gönder
+            socket.emit("messageDelivered", deliveryData)
+            
+            // Mesaj durumunu güncelle
+            DispatchQueue.main.async {
+                if let index = self.messages.firstIndex(where: { $0.id == messageId }) {
+                    self.messages[index].status = .delivered
+                    CoreDataManager.shared.updateMessageStatus(messageId: messageId, status: .delivered)
+                }
+            }
+            
+            // Kısa bir süre bekleyip bağlantıyı kapat
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                if self.socket.status.active {
+                    self.socket.disconnect()
+                }
+                completion(true)
             }
         }
-        
-        completion(true)
-    }
     
     // CoreData ile ilgili yardımcı fonksiyonlar
     func clearAllMessages() {
@@ -214,6 +230,8 @@ extension SocketIOManager {
             "senderName": senderName
         ])
     }
+    
+    
 }
 
 

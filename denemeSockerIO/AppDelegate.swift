@@ -13,6 +13,13 @@ import UserNotifications
 
 class AppDelegate: NSObject, UIApplicationDelegate {
     let socketManager = SocketIOManager.shared
+    private var isConnecting = false
+    private var pendingMessages: [(String, String, String)] = [] // (messageId, username, senderName)
+    
+    // Background task yönetimi için
+    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+    private var backgroundTimer: Timer?
+    private let backgroundTimeInterval: TimeInterval = 10 // 10 saniye
     
     func application(_ application: UIApplication,
                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
@@ -21,7 +28,6 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         Messaging.messaging().delegate = self
         UNUserNotificationCenter.current().delegate = self
         
-        // Background fetch'i etkinleştir
         application.setMinimumBackgroundFetchInterval(UIApplication.backgroundFetchIntervalMinimum)
         
         let authOptions: UNAuthorizationOptions = [.alert, .badge, .sound]
@@ -34,8 +40,140 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         }
         
         application.registerForRemoteNotifications()
+        setupSocketConnection()
         
         return true
+    }
+    
+    private func startBackgroundTask() {
+        // Eğer hali hazırda bir background task varsa, timer'ı yeniden başlat
+        if backgroundTask != .invalid {
+            print("Mevcut background task'in süresi yenileniyor")
+            restartBackgroundTimer()
+            return
+        }
+        
+        // Yeni background task başlat
+        backgroundTask = UIApplication.shared.beginBackgroundTask { [weak self] in
+            self?.endBackgroundTask()
+        }
+        
+        print("Yeni background task başlatıldı")
+        startBackgroundTimer()
+    }
+    
+    private func startBackgroundTimer() {
+        // Varolan timer'ı temizle
+        backgroundTimer?.invalidate()
+        
+        // Yeni timer başlat
+        backgroundTimer = Timer.scheduledTimer(withTimeInterval: backgroundTimeInterval, repeats: false) { [weak self] _ in
+            self?.endBackgroundTask()
+        }
+    }
+    
+    private func restartBackgroundTimer() {
+        print("Background timer yeniden başlatılıyor")
+        startBackgroundTimer()
+    }
+    
+    private func endBackgroundTask() {
+        print("Background task sonlandırılıyor")
+        backgroundTimer?.invalidate()
+        backgroundTimer = nil
+        
+        if backgroundTask != .invalid {
+            UIApplication.shared.endBackgroundTask(backgroundTask)
+            backgroundTask = .invalid
+        }
+        
+        // Socket bağlantısını kapat
+        socketManager.disconnect()
+    }
+    
+    private func setupSocketConnection() {
+        socketManager.socket.on(clientEvent: .connect) { [weak self] _, _ in
+            print("Socket bağlandı, bekleyen mesajları gönder")
+            self?.isConnecting = false
+            self?.processPendingMessages()
+        }
+        
+        socketManager.socket.on(clientEvent: .disconnect) { [weak self] _, _ in
+            print("Socket bağlantısı koptu")
+            self?.isConnecting = false
+        }
+        
+        socketManager.socket.on(clientEvent: .error) { [weak self] _, _ in
+            print("Socket bağlantı hatası")
+            self?.isConnecting = false
+        }
+    }
+    
+    private func processPendingMessages() {
+        guard !pendingMessages.isEmpty else { return }
+        
+        for (messageId, username, senderName) in pendingMessages {
+            sendDeliveryReceipt(messageId: messageId, username: username, senderName: senderName)
+        }
+        pendingMessages.removeAll()
+    }
+    
+    private func sendDeliveryReceipt(messageId: String, username: String, senderName: String) {
+        // Socket bağlı değilse ve bağlanma işlemi devam etmiyorsa
+        if !socketManager.socket.status.active && !isConnecting {
+            isConnecting = true
+            pendingMessages.append((messageId, username, senderName))
+            socketManager.connect()
+            return
+        }
+        
+        // Socket bağlanıyor durumdaysa, mesajı kuyruğa ekle
+        if isConnecting {
+            pendingMessages.append((messageId, username, senderName))
+            return
+        }
+        
+        // Socket bağlıysa, mesajı hemen gönder
+        socketManager.socket.emit("messageDelivered", [
+            "messageId": messageId,
+            "username": username,
+            "senderName": senderName
+        ])
+        print("İletildi bilgisi gönderildi - MessageID: \(messageId)")
+    }
+    
+    private func handleNotification(_ userInfo: [AnyHashable: Any], withCompletionHandler completionHandler: ((UIBackgroundFetchResult) -> Void)? = nil) {
+        guard let messageId = userInfo["messageId"] as? String,
+              let username = userInfo["username"] as? String,
+              let senderName = userInfo["senderName"] as? String else {
+            completionHandler?(.noData)
+            return
+        }
+        
+        // Background task'i başlat veya yenile
+        startBackgroundTask()
+        
+        // Mesajı işle ve kaydet
+        if let messageText = userInfo["message"] as? String {
+            let message = Message(
+                id: messageId,
+                username: senderName,
+                toUsername: username,
+                message: messageText,
+                timestamp: Date().ISO8601Format(),
+                status: .delivered
+            )
+            
+            DispatchQueue.main.async {
+                CoreDataManager.shared.saveMessage(message, isCurrentUser: false)
+                self.socketManager.messages.append(message)
+            }
+        }
+        
+        // İletildi bilgisini gönder
+        sendDeliveryReceipt(messageId: messageId, username: username, senderName: senderName)
+        
+        completionHandler?(.newData)
     }
     
     func application(_ application: UIApplication,
@@ -44,105 +182,20 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     }
     
     func application(_ application: UIApplication,
-                    didFailToRegisterForRemoteNotificationsWithError error: Error) {
-        print("Failed to register for remote notifications:", error)
-    }
-    
-    func application(_ application: UIApplication,
                     didReceiveRemoteNotification userInfo: [AnyHashable : Any],
                     fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
-        
-        print("Bildirim alındı:", userInfo)
-        
-        // Background task oluştur
-        var backgroundTask: UIBackgroundTaskIdentifier = .invalid
-        backgroundTask = application.beginBackgroundTask {
-            application.endBackgroundTask(backgroundTask)
-            backgroundTask = .invalid
-        }
-        
-        if let messageId = userInfo["messageId"] as? String,
-           let username = userInfo["username"] as? String,
-           let senderName = userInfo["senderName"] as? String {
-            
-            // Socket.IO bağlantısını kur
-            socketManager.connect()
-            
-            // Mesajı CoreData'ya kaydet ve UI'ı güncelle
-            if let messageText = userInfo["message"] as? String {
-                let message = Message(
-                    id: messageId,
-                    username: senderName,
-                    toUsername: username,
-                    message: messageText,
-                    timestamp: Date().ISO8601Format(),
-                    status: .delivered
-                )
-                
-                DispatchQueue.main.async {
-                    CoreDataManager.shared.saveMessage(message, isCurrentUser: false)
-                    self.socketManager.messages.append(message)
-                }
-            }
-            
-            // Socket bağlantısı için timeout başlat
-            let timeoutTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { _ in
-                if self.socketManager.socket.status.active {
-                    self.socketManager.disconnect()
-                    application.endBackgroundTask(backgroundTask)
-                    completionHandler(.failed)
-                }
-            }
-            
-            socketManager.socket.once(clientEvent: .connect) { [weak self] data, ack in
-                // Delivery receipt'i gönder
-                self?.socketManager.socket.emit("messageDelivered", [
-                    "messageId": messageId,
-                    "username": username,
-                    "senderName": senderName
-                ])
-                
-                print("MessageDelivered eventi gönderildi")
-                
-                // Timer'ı iptal et
-                timeoutTimer.invalidate()
-                
-                // Bağlantıyı kapat ve background task'i sonlandır
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                    self?.socketManager.disconnect()
-                    application.endBackgroundTask(backgroundTask)
-                    completionHandler(.newData)
-                }
-            }
-            
-            // Bağlantı hatası durumu için
-            socketManager.socket.on(clientEvent: .error) { [weak self] data, ack in
-                print("Socket bağlantı hatası")
-                self?.socketManager.disconnect()
-                application.endBackgroundTask(backgroundTask)
-                completionHandler(.failed)
-            }
-            
-        } else {
-            application.endBackgroundTask(backgroundTask)
-            completionHandler(.noData)
-        }
+        handleNotification(userInfo, withCompletionHandler: completionHandler)
     }
 }
 
 extension AppDelegate: MessagingDelegate {
     func messaging(_ messaging: Messaging, didReceiveRegistrationToken fcmToken: String?) {
-        print("=== FCM Token Debug ===")
         if let token = fcmToken {
-            print("Valid FCM token received:", token)
-            
             NotificationCenter.default.post(
                 name: Notification.Name("FCMToken"),
                 object: nil,
                 userInfo: ["token": token]
             )
-        } else {
-            print("FCM token is nil!")
         }
     }
 }
@@ -151,82 +204,14 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                               willPresent notification: UNNotification,
                               withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
-        let userInfo = notification.request.content.userInfo
-        print("Foreground'da bildirim alındı:", userInfo)
-        
-        // Background task oluştur
-        var backgroundTask: UIBackgroundTaskIdentifier = .invalid
-        backgroundTask = UIApplication.shared.beginBackgroundTask {
-            UIApplication.shared.endBackgroundTask(backgroundTask)
-            backgroundTask = .invalid
-        }
-        
-        if let messageId = userInfo["messageId"] as? String,
-           let username = userInfo["username"] as? String,
-           let senderName = userInfo["senderName"] as? String {
-            
-            // Socket.IO bağlantısını kur ve iletildi bilgisini gönder
-            socketManager.connect()
-            
-            socketManager.socket.once(clientEvent: .connect) { [weak self] data, ack in
-                self?.socketManager.socket.emit("messageDelivered", [
-                    "messageId": messageId,
-                    "username": username,
-                    "senderName": senderName
-                ])
-                
-                print("Message delivery receipt gönderildi")
-                
-                // Bağlantıyı kapat ve background task'i sonlandır
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                    self?.socketManager.disconnect()
-                    UIApplication.shared.endBackgroundTask(backgroundTask)
-                }
-            }
-        }
-        
+        handleNotification(notification.request.content.userInfo)
         completionHandler([[.banner, .badge, .sound]])
     }
     
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                               didReceive response: UNNotificationResponse,
                               withCompletionHandler completionHandler: @escaping () -> Void) {
-        let userInfo = response.notification.request.content.userInfo
-        print("Bildirime tıklandı:", userInfo)
-        
-        // Background task oluştur
-        var backgroundTask: UIBackgroundTaskIdentifier = .invalid
-        backgroundTask = UIApplication.shared.beginBackgroundTask {
-            UIApplication.shared.endBackgroundTask(backgroundTask)
-            backgroundTask = .invalid
-        }
-        
-        if let messageId = userInfo["messageId"] as? String,
-           let username = userInfo["username"] as? String,
-           let senderName = userInfo["senderName"] as? String {
-            
-            print("Bildirime tıklandı ve işleniyor - MessageID: \(messageId)")
-            
-            // Socket.IO bağlantısını kur
-            socketManager.connect()
-            
-            socketManager.socket.once(clientEvent: .connect) { [weak self] data, ack in
-                self?.socketManager.socket.emit("messageDelivered", [
-                    "messageId": messageId,
-                    "username": username,
-                    "senderName": senderName
-                ])
-                
-                print("MessageDelivered eventi gönderildi")
-                
-                // Bağlantıyı kapat ve background task'i sonlandır
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                    self?.socketManager.disconnect()
-                    UIApplication.shared.endBackgroundTask(backgroundTask)
-                }
-            }
-        }
-        
+        handleNotification(response.notification.request.content.userInfo)
         completionHandler()
     }
 }
