@@ -7,12 +7,13 @@
 
 
 import SwiftUI
-// ChatView.swift
+
 struct ChatView: View {
-    @StateObject private var socketManager = SocketIOManager()
+    @StateObject private var socketManager = SocketIOManager.shared
     @State private var messageText = ""
     @State private var username: String
     @State private var showUserList = false
+    @State private var showLogs = false
     
     init(defaultUsername: String) {
         _username = State(initialValue: defaultUsername)
@@ -66,11 +67,19 @@ struct ChatView: View {
                 }
                 .navigationTitle(selectedUser)
                 .navigationBarItems(trailing:
-                    Button("Yeni Sohbet") {
-                        socketManager.selectedUser = nil
-                        showUserList = true
+                    HStack {
+                        Button("Logs") {
+                            showLogs.toggle()
+                        }
+                        Button("Yeni Sohbet") {
+                            socketManager.selectedUser = nil
+                            showUserList = true
+                        }
                     }
                 )
+                .sheet(isPresented: $showLogs) {
+                    LogViewer()
+                }
             } else {
                 // Kullanıcı seçme ekranı
                 VStack {
@@ -85,6 +94,14 @@ struct ChatView: View {
                     }
                 }
                 .navigationTitle("Sohbet Başlat")
+                .navigationBarItems(trailing:
+                    Button("Logs") {
+                        showLogs.toggle()
+                    }
+                )
+                .sheet(isPresented: $showLogs) {
+                    LogViewer()
+                }
                 .onAppear {
                     socketManager.connect()
                     socketManager.joinChat(username: username)
@@ -104,5 +121,31 @@ struct ChatView: View {
         guard !messageText.isEmpty else { return }
         socketManager.sendMessage(message: messageText)
         messageText = ""
+    }
+}
+
+struct LogViewer: View {
+    @State private var logs = ""
+    let timer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+    
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                Text(logs)
+                    .padding()
+                    .font(.system(.body, design: .monospaced))
+            }
+            .navigationTitle("Notification Logs")
+            .navigationBarItems(trailing: Button("Clear") {
+                NotificationLogReader.shared.clearLogs()
+                logs = "Logs cleared"
+            })
+            .onAppear {
+                logs = NotificationLogReader.shared.readLogs()
+            }
+            .onReceive(timer) { _ in
+                logs = NotificationLogReader.shared.readLogs()
+            }
+        }
     }
 }

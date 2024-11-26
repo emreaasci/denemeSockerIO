@@ -31,6 +31,7 @@
 		274CA10A2CF0A60B004C9AB5 /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = 274CA1092CF0A60B004C9AB5 /* FirebaseStorage */; };
 		274CA10C2CF0A60B004C9AB5 /* FirebaseStorageCombine-Community in Frameworks */ = {isa = PBXBuildFile; productRef = 274CA10B2CF0A60B004C9AB5 /* FirebaseStorageCombine-Community */; };
 		274CA10E2CF0A60B004C9AB5 /* FirebaseVertexAI in Frameworks */ = {isa = PBXBuildFile; productRef = 274CA10D2CF0A60B004C9AB5 /* FirebaseVertexAI */; };
+		2750E8E52CF38C41003926D0 /* SwiftMQTT in Frameworks */ = {isa = PBXBuildFile; productRef = 2750E8E42CF38C41003926D0 /* SwiftMQTT */; };
 		27BE101E2CEF3ED10099D038 /* SocketIO in Frameworks */ = {isa = PBXBuildFile; productRef = 27BE101D2CEF3ED10099D038 /* SocketIO */; };
 /* End PBXBuildFile section */
 
@@ -101,6 +102,7 @@
 				274CA0E62CF0A60B004C9AB5 /* FirebaseAnalyticsWithoutAdIdSupport in Frameworks */,
 				274CA0AD2CF0926F004C9AB5 /* FirebaseAnalytics in Frameworks */,
 				274CA1042CF0A60B004C9AB5 /* FirebaseMLModelDownloader in Frameworks */,
+				2750E8E52CF38C41003926D0 /* SwiftMQTT in Frameworks */,
 				274CA0F22CF0A60B004C9AB5 /* FirebaseCrashlytics in Frameworks */,
 				274CA1022CF0A60B004C9AB5 /* FirebaseInstallations in Frameworks */,
 				274CA10C2CF0A60B004C9AB5 /* FirebaseStorageCombine-Community in Frameworks */,
@@ -211,6 +213,7 @@
 				274CA1092CF0A60B004C9AB5 /* FirebaseStorage */,
 				274CA10B2CF0A60B004C9AB5 /* FirebaseStorageCombine-Community */,
 				274CA10D2CF0A60B004C9AB5 /* FirebaseVertexAI */,
+				2750E8E42CF38C41003926D0 /* SwiftMQTT */,
 			);
 			productName = denemeSockerIO;
 			productReference = 27BE0FCA2CEF24D30099D038 /* denemeSockerIO.app */;
@@ -293,6 +296,7 @@
 			packageReferences = (
 				27BE10012CEF263B0099D038 /* XCRemoteSwiftPackageReference "socket" */,
 				274CA0282CF07AAB004C9AB5 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+				2750E8E32CF38C41003926D0 /* XCRemoteSwiftPackageReference "SwiftMQTT" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 27BE0FCB2CEF24D30099D038 /* Products */;
@@ -671,6 +675,14 @@
 				minimumVersion = 11.5.0;
 			};
 		};
+		2750E8E32CF38C41003926D0 /* XCRemoteSwiftPackageReference "SwiftMQTT" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/aciidb0mb3r/SwiftMQTT";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 3.0.1;
+			};
+		};
 		27BE10012CEF263B0099D038 /* XCRemoteSwiftPackageReference "socket" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/socketio/socket.io-client-swift";
@@ -799,6 +811,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 274CA0282CF07AAB004C9AB5 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseVertexAI;
+		};
+		2750E8E42CF38C41003926D0 /* SwiftMQTT */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 2750E8E32CF38C41003926D0 /* XCRemoteSwiftPackageReference "SwiftMQTT" */;
+			productName = SwiftMQTT;
 		};
 		27BE101D2CEF3ED10099D038 /* SocketIO */ = {
 			isa = XCSwiftPackageProductDependency;

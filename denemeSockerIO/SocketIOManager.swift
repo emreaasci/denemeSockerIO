@@ -5,24 +5,21 @@
 //  Created by Emre Aşcı on 21.11.2024.
 //
 
-// SocketIOManager.swift
 import Foundation
 import SocketIO
-import FirebaseCore
-import FirebaseMessaging
-import UserNotifications
 
 class SocketIOManager: ObservableObject {
+    static let shared = SocketIOManager()
     @Published var messages: [Message] = []
     @Published var onlineUsers: [String] = []
     @Published var selectedUser: String?
     private var currentUsername: String = ""
     
     private var manager: SocketManager
-    private var socket: SocketIOClient
+    var socket: SocketIOClient
     
     init() {
-        let serverURL = "http://192.168.1.111:3000"
+        let serverURL = "http://172.10.40.76:3000"
         
         manager = SocketManager(socketURL: URL(string: serverURL)!, config: [
             .log(true),
@@ -103,23 +100,14 @@ class SocketIOManager: ObservableObject {
     }
     
     private func setupFCMTokenObserver() {
-        NotificationCenter.default.addObserver(forName: Notification.Name("FCMToken"),
-                                            object: nil,
-                                            queue: .main) { [weak self] notification in
-            if let token = notification.userInfo?["token"] as? String {
-                self?.registerFCMToken(token: token)
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("FCMToken"),
+            object: nil,
+            queue: .main) { [weak self] notification in
+                if let token = notification.userInfo?["token"] as? String {
+                    self?.registerFCMToken(token: token)
+                }
             }
-        }
-        
-        Messaging.messaging().token { [weak self] token, error in
-            if let error = error {
-                print("FCM registration token error: \(error)")
-                return
-            }
-            if let token = token {
-                self?.registerFCMToken(token: token)
-            }
-        }
     }
     
     private func registerFCMToken(token: String) {
@@ -160,21 +148,12 @@ class SocketIOManager: ObservableObject {
     func joinChat(username: String) {
         self.currentUsername = username
         socket.emit("userJoined", ["username": username])
-        
-        Messaging.messaging().token { [weak self] token, error in
-            if let token = token {
-                self?.registerFCMToken(token: token)
-            }
-        }
-        
-        // Kaydedilmiş mesajları yükle
         loadSavedMessages()
     }
     
     func selectUser(_ username: String) {
         selectedUser = username
         socket.emit("selectUser", username)
-        // Seçili kullanıcıyla olan mesajları filtrele
         filterMessagesForCurrentChat()
     }
     
@@ -188,6 +167,31 @@ class SocketIOManager: ObservableObject {
         socket.emit("privateMessage", messageData)
     }
     
+    func reportMessageDelivery(messageId: String, username: String, from: String, completion: @escaping (Bool) -> Void) {
+        // Socket bağlı değilse bağlan
+        if !socket.status.active {
+            connect()
+        }
+        
+        // Mesajın iletildiğini bildir
+        socket.emit("messageDelivered", [
+            "messageId": messageId,
+            "username": username,
+            "from": from
+        ])
+        
+        // Gönderenin mesajını güncelle
+        DispatchQueue.main.async {
+            if let index = self.messages.firstIndex(where: { $0.id == messageId }) {
+                self.messages[index].status = .delivered
+                // CoreData'da güncelle
+                CoreDataManager.shared.updateMessageStatus(messageId: messageId, status: .delivered)
+            }
+        }
+        
+        completion(true)
+    }
+    
     // CoreData ile ilgili yardımcı fonksiyonlar
     func clearAllMessages() {
         CoreDataManager.shared.clearAllMessages()
@@ -199,4 +203,17 @@ class SocketIOManager: ObservableObject {
         messages.removeAll { $0.id == id }
     }
 }
+
+extension SocketIOManager {
+    func sendNotificationReceivedConfirmation(messageId: String, username: String, senderName: String) {
+        print("Bildirim alındı onayı gönderiliyor - MessageID: \(messageId)")
+        
+        socket.emit("notificationReceived", [
+            "messageId": messageId,
+            "username": username,
+            "senderName": senderName
+        ])
+    }
+}
+
 

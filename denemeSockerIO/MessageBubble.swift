@@ -4,7 +4,6 @@
 //
 //  Created by Emre Aşcı on 21.11.2024.
 //
-
 import SwiftUI
 
 struct MessageBubble: View {

@@ -16,13 +16,8 @@ struct ChatApp: App {
     
     var body: some Scene {
         WindowGroup {
-            ChatView(defaultUsername: "Simulator-iPhone")
+            ChatView(defaultUsername: "Emre-iPhone")
                 .environment(\.managedObjectContext, persistenceController.viewContext)
         }
     }
 }
-
-
-
-
-

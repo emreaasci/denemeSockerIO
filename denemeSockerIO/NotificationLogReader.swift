@@ -1,3 +1,11 @@
+//
+//  NotificationLogReader.swift
+//  denemeSockerIO
+//
+//  Created by Emre Aşcı on 24.11.2024.
+//
+
+
 import Foundation
 
 class NotificationLogReader {
