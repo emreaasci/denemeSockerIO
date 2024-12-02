@@ -21,5 +21,13 @@
 		<string>fetch</string>
 		<string>processing</string>
 	</array>
+    <key>PKPushTypeVoIP</key>
+    <string>1</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>Fotoğraf göndermek için fotoğraflarınıza erişim izni gerekiyor.</string>
+    <key>NSPhotoLibraryAddUsageDescription</key>
+    <string>Alınan fotoğrafları kaydetmek için galerinize erişim izni gerekiyor.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Sesli mesaj göndermek için mikrofon izni gerekiyor</string>
 </dict>
 </plist>

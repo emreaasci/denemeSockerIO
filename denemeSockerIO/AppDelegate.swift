@@ -5,31 +5,30 @@
 //  Created by Emre Aşcı on 22.11.2024.
 //
 
-
 import UIKit
 import Firebase
 import FirebaseMessaging
 import UserNotifications
+import PushKit
+import AVFoundation
 
 class AppDelegate: NSObject, UIApplicationDelegate {
     let socketManager = SocketIOManager.shared
-    private var isConnecting = false
-    private var pendingMessages: [(String, String, String)] = [] // (messageId, username, senderName)
-    
-    // Background task yönetimi için
-    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
-    private var backgroundTimer: Timer?
-    private let backgroundTimeInterval: TimeInterval = 10 // 10 saniye
+    private var voipRegistry: PKPushRegistry?
     
     func application(_ application: UIApplication,
                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
         
         FirebaseApp.configure()
-        Messaging.messaging().delegate = self
-        UNUserNotificationCenter.current().delegate = self
         
+        // Push Notifications için
+        UNUserNotificationCenter.current().delegate = self
+        Messaging.messaging().delegate = self
+        
+        // Background fetch için
         application.setMinimumBackgroundFetchInterval(UIApplication.backgroundFetchIntervalMinimum)
         
+        // Push izinleri
         let authOptions: UNAuthorizationOptions = [.alert, .badge, .sound]
         UNUserNotificationCenter.current().requestAuthorization(
             options: authOptions) { granted, error in
@@ -39,141 +38,175 @@ class AppDelegate: NSObject, UIApplicationDelegate {
                 }
         }
         
+        // Bildirim kategorilerini ayarla
+        configurePushCategories()
+        
         application.registerForRemoteNotifications()
-        setupSocketConnection()
+        
+        // VoIP push için
+        voipRegistry = PKPushRegistry(queue: .main)
+        voipRegistry?.delegate = self
+        voipRegistry?.desiredPushTypes = [.voIP]
+        
+        
+        configureAudioSession()
         
         return true
     }
     
-    private func startBackgroundTask() {
-        // Eğer hali hazırda bir background task varsa, timer'ı yeniden başlat
-        if backgroundTask != .invalid {
-            print("Mevcut background task'in süresi yenileniyor")
-            restartBackgroundTimer()
-            return
-        }
-        
-        // Yeni background task başlat
-        backgroundTask = UIApplication.shared.beginBackgroundTask { [weak self] in
-            self?.endBackgroundTask()
-        }
-        
-        print("Yeni background task başlatıldı")
-        startBackgroundTimer()
-    }
-    
-    private func startBackgroundTimer() {
-        // Varolan timer'ı temizle
-        backgroundTimer?.invalidate()
-        
-        // Yeni timer başlat
-        backgroundTimer = Timer.scheduledTimer(withTimeInterval: backgroundTimeInterval, repeats: false) { [weak self] _ in
-            self?.endBackgroundTask()
+    func configureAudioSession() {
+        do {
+            let audioSession = AVAudioSession.sharedInstance()
+            try audioSession.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+        } catch {
+            print("Audio session yapılandırma hatası:", error)
         }
     }
+
     
-    private func restartBackgroundTimer() {
-        print("Background timer yeniden başlatılıyor")
-        startBackgroundTimer()
+    private func configurePushCategories() {
+        let deliveryAction = UNNotificationAction(
+            identifier: "DELIVERY_ACTION",
+            title: "İletildi",
+            options: [.foreground]
+        )
+        
+        let chatCategory = UNNotificationCategory(
+            identifier: "CHAT_MESSAGE",
+            actions: [deliveryAction],
+            intentIdentifiers: [],
+            options: []
+        )
+        
+        UNUserNotificationCenter.current().setNotificationCategories([chatCategory])
     }
     
-    private func endBackgroundTask() {
-        print("Background task sonlandırılıyor")
-        backgroundTimer?.invalidate()
-        backgroundTimer = nil
-        
-        if backgroundTask != .invalid {
-            UIApplication.shared.endBackgroundTask(backgroundTask)
-            backgroundTask = .invalid
-        }
-        
-        // Socket bağlantısını kapat
-        socketManager.disconnect()
-    }
-    
-    private func setupSocketConnection() {
-        socketManager.socket.on(clientEvent: .connect) { [weak self] _, _ in
-            print("Socket bağlandı, bekleyen mesajları gönder")
-            self?.isConnecting = false
-            self?.processPendingMessages()
-        }
-        
-        socketManager.socket.on(clientEvent: .disconnect) { [weak self] _, _ in
-            print("Socket bağlantısı koptu")
-            self?.isConnecting = false
-        }
-        
-        socketManager.socket.on(clientEvent: .error) { [weak self] _, _ in
-            print("Socket bağlantı hatası")
-            self?.isConnecting = false
-        }
-    }
-    
-    private func processPendingMessages() {
-        guard !pendingMessages.isEmpty else { return }
-        
-        for (messageId, username, senderName) in pendingMessages {
-            sendDeliveryReceipt(messageId: messageId, username: username, senderName: senderName)
-        }
-        pendingMessages.removeAll()
-    }
-    
-    private func sendDeliveryReceipt(messageId: String, username: String, senderName: String) {
-        // Socket bağlı değilse ve bağlanma işlemi devam etmiyorsa
-        if !socketManager.socket.status.active && !isConnecting {
-            isConnecting = true
-            pendingMessages.append((messageId, username, senderName))
-            socketManager.connect()
-            return
-        }
-        
-        // Socket bağlanıyor durumdaysa, mesajı kuyruğa ekle
-        if isConnecting {
-            pendingMessages.append((messageId, username, senderName))
-            return
-        }
-        
-        // Socket bağlıysa, mesajı hemen gönder
-        socketManager.socket.emit("messageDelivered", [
-            "messageId": messageId,
-            "username": username,
-            "senderName": senderName
-        ])
-        print("İletildi bilgisi gönderildi - MessageID: \(messageId)")
-    }
-    
-    private func handleNotification(_ userInfo: [AnyHashable: Any], withCompletionHandler completionHandler: ((UIBackgroundFetchResult) -> Void)? = nil) {
+    func handleChatNotification(_ userInfo: [AnyHashable: Any]) {
         guard let messageId = userInfo["messageId"] as? String,
               let username = userInfo["username"] as? String,
               let senderName = userInfo["senderName"] as? String else {
-            completionHandler?(.noData)
             return
         }
         
-        // Background task'i başlat veya yenile
-        startBackgroundTask()
+        let backgroundTaskID = UIApplication.shared.beginBackgroundTask { [weak self] in
+            self?.endAllTasks()
+        }
         
-        // Mesajı işle ve kaydet
-        if let messageText = userInfo["message"] as? String {
+        let type = userInfo["type"] as? String ?? "text"
+        let image = userInfo["image"] as? String
+        let audio = userInfo["audio"] as? String
+        let video = userInfo["video"] as? String
+        let duration = (userInfo["duration"] as? String).flatMap { Double($0) }
+        
+        // Mesajı kaydet
+        switch type {
+        case "image":
             let message = Message(
                 id: messageId,
                 username: senderName,
                 toUsername: username,
-                message: messageText,
+                message: "Fotoğraf gönderdi",
                 timestamp: Date().ISO8601Format(),
-                status: .delivered
+                status: .delivered,
+                type: type,
+                image: image,
+                audio: nil,
+                video: nil,
+                duration: nil
             )
             
             DispatchQueue.main.async {
                 CoreDataManager.shared.saveMessage(message, isCurrentUser: false)
                 self.socketManager.messages.append(message)
             }
+            
+        case "audio":
+            let message = Message(
+                id: messageId,
+                username: senderName,
+                toUsername: username,
+                message: "Ses mesajı gönderdi",
+                timestamp: Date().ISO8601Format(),
+                status: .delivered,
+                type: type,
+                image: nil,
+                audio: audio,
+                video: nil,
+                duration: duration
+            )
+            
+            DispatchQueue.main.async {
+                CoreDataManager.shared.saveMessage(message, isCurrentUser: false)
+                self.socketManager.messages.append(message)
+            }
+            
+        case "video":
+            let message = Message(
+                id: messageId,
+                username: senderName,
+                toUsername: username,
+                message: "Video gönderdi",
+                timestamp: Date().ISO8601Format(),
+                status: .delivered,
+                type: type,
+                image: nil,
+                audio: nil,
+                video: video,
+                duration: duration
+            )
+            
+            DispatchQueue.main.async {
+                CoreDataManager.shared.saveMessage(message, isCurrentUser: false)
+                self.socketManager.messages.append(message)
+            }
+            
+        default: // text
+            if let messageText = userInfo["message"] as? String {
+                let message = Message(
+                    id: messageId,
+                    username: senderName,
+                    toUsername: username,
+                    message: messageText,
+                    timestamp: Date().ISO8601Format(),
+                    status: .delivered,
+                    type: "text",
+                    image: nil,
+                    audio: nil,
+                    video: nil,
+                    duration: nil
+                )
+                
+                DispatchQueue.main.async {
+                    CoreDataManager.shared.saveMessage(message, isCurrentUser: false)
+                    self.socketManager.messages.append(message)
+                }
+            }
+        }
+        
+        // Socket.IO bağlantısını kur
+        if !socketManager.socket.status.active {
+            socketManager.connect()
         }
         
         // İletildi bilgisini gönder
-        sendDeliveryReceipt(messageId: messageId, username: username, senderName: senderName)
+        socketManager.socket.emit("messageDelivered", [
+            "messageId": messageId,
+            "username": username,
+            "senderName": senderName
+        ])
         
-        completionHandler?(.newData)
+        // 5 saniye sonra background task'i sonlandır
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+            self.endAllTasks()
+            UIApplication.shared.endBackgroundTask(backgroundTaskID)
+        }
+    }
+    
+    private func endAllTasks() {
+        if socketManager.socket.status.active {
+            socketManager.disconnect()
+        }
     }
     
     func application(_ application: UIApplication,
@@ -184,7 +217,26 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                     didReceiveRemoteNotification userInfo: [AnyHashable : Any],
                     fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
-        handleNotification(userInfo, withCompletionHandler: completionHandler)
+        
+        handleChatNotification(userInfo)
+        completionHandler(.newData)
+    }
+}
+
+extension AppDelegate: PKPushRegistryDelegate {
+    func pushRegistry(_ registry: PKPushRegistry,
+                     didUpdate pushCredentials: PKPushCredentials,
+                     for type: PKPushType) {
+        print("VoIP token:", pushCredentials.token.map { String(format: "%02.2hhx", $0) }.joined())
+    }
+    
+    func pushRegistry(_ registry: PKPushRegistry,
+                     didReceiveIncomingPushWith payload: PKPushPayload,
+                     for type: PKPushType,
+                     completion: @escaping () -> Void) {
+        
+        handleChatNotification(payload.dictionaryPayload)
+        completion()
     }
 }
 
@@ -204,14 +256,16 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                               willPresent notification: UNNotification,
                               withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
-        handleNotification(notification.request.content.userInfo)
+        
+        handleChatNotification(notification.request.content.userInfo)
         completionHandler([[.banner, .badge, .sound]])
     }
     
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                               didReceive response: UNNotificationResponse,
                               withCompletionHandler completionHandler: @escaping () -> Void) {
-        handleNotification(response.notification.request.content.userInfo)
+        
+        handleChatNotification(response.notification.request.content.userInfo)
         completionHandler()
     }
 }

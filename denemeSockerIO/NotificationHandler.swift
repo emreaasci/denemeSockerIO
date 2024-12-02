@@ -33,28 +33,62 @@ class NotificationHandler: NSObject {
     
     private func handleNotification(_ userInfo: [AnyHashable: Any], completionHandler: ((UIBackgroundFetchResult) -> Void)? = nil) {
         // Notification tipini kontrol et
-        let type = userInfo["type"] as? String
         let messageId = userInfo["messageId"] as? String ?? ""
         let username = userInfo["username"] as? String ?? ""
         let senderName = userInfo["senderName"] as? String ?? ""
-        let message = userInfo["message"] as? String
+        let message = userInfo["message"] as? String ?? ""
+        let type = userInfo["type"] as? String ?? "text"
+        let image = userInfo["image"] as? String
+        let audio = userInfo["audio"] as? String
+        let video = userInfo["video"] as? String
+        let duration = (userInfo["duration"] as? String).flatMap { Double($0) }
         
         // Mesajı CoreData'ya kaydet ve UI'ı güncelle
-        if let messageText = message {
-            let newMessage = Message(
-                id: messageId,
-                username: senderName,
-                toUsername: username,
-                message: messageText,
-                timestamp: Date().ISO8601Format(),
-                status: .delivered
-            )
+        let newMessage = Message(
+            id: messageId,
+            username: senderName,
+            toUsername: username,
+            message: message,
+            timestamp: Date().ISO8601Format(),
+            status: .delivered,
+            type: type,
+            image: image,
+            audio: audio,
+            video: video,
+            duration: duration
+        )
+        
+        DispatchQueue.main.async {
+            CoreDataManager.shared.saveMessage(newMessage, isCurrentUser: false)
+            self.socketManager.messages.append(newMessage)
+        }
+        
+        // Socket.IO üzerinden iletildi bilgisini gönder
+        self.socketManager.connect()
+        self.socketManager.socket.once(clientEvent: .connect) { [weak self] _, _ in
+            let deliveryEvent = type == "silent_receipt" ? "notificationReceived" : "messageDelivered"
             
-            DispatchQueue.main.async {
-                CoreDataManager.shared.saveMessage(newMessage, isCurrentUser: false)
-                self.socketManager.messages.append(newMessage)
+            self?.socketManager.socket.emit(deliveryEvent, [
+                "messageId": messageId,
+                "username": username,
+                "senderName": senderName
+            ])
+            
+            // Bağlantıyı kapat
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                self?.socketManager.disconnect()
+                completionHandler?(.newData)
             }
         }
+        
+        // Timeout kontrolü
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+            if self.socketManager.socket.status.active {
+                self.socketManager.disconnect()
+                completionHandler?(.failed)
+            }
+        }
+    
         
         // Socket.IO üzerinden iletildi bilgisini gönder
         self.socketManager.connect()

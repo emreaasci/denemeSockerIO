@@ -1,3 +1,11 @@
+//
+//  AudioRecorder.swift
+//  denemeSockerIO
+//
+//  Created by Emre Aşcı on 29.11.2024.
+//
+
+
 // AudioRecorder.swift - Ses kaydı için yardımcı sınıf
 import AVFoundation
 
@@ -15,7 +23,7 @@ class AudioRecorder: NSObject, ObservableObject {
     private func setupAudioSession() {
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playAndRecord, mode: .default)
+            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
             try session.setActive(true)
         } catch {
             print("Audio session setup failed:", error)

@@ -14,6 +14,11 @@ struct Message: Identifiable, Equatable {
     let message: String
     let timestamp: String
     var status: MessageStatus
+    let type: String? 
+    let image: String?
+    let audio: String?
+    let video: String?
+    let duration: Double?
 }
 
 enum MessageStatus: String {

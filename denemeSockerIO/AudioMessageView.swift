@@ -1,4 +1,10 @@
-// MediaMessageViews.swift - Medya mesajları için view'lar
+//
+//  AudioMessageView.swift
+//  denemeSockerIO
+//
+//  Created by Emre Aşcı on 29.11.2024.
+//
+
 import SwiftUI
 import AVKit
 import PhotosUI
@@ -6,14 +12,12 @@ import PhotosUI
 struct AudioMessageView: View {
     let audioData: Data
     let duration: Double
-    @State private var audioPlayer: AVAudioPlayer?
-    @State private var isPlaying = false
-    @State private var progress: Double = 0
+    @StateObject private var playerManager = AudioPlayerManager()
     
     var body: some View {
         HStack {
-            Button(action: togglePlayback) {
-                Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
+            Button(action: { playerManager.togglePlayback() }) {
+                Image(systemName: playerManager.isPlaying ? "pause.circle.fill" : "play.circle.fill")
                     .font(.system(size: 24))
                     .foregroundColor(.blue)
             }
@@ -31,55 +35,20 @@ struct AudioMessageView: View {
                         
                         Rectangle()
                             .fill(Color.blue)
-                            .frame(width: geometry.size.width * progress, height: 3)
+                            .frame(width: geometry.size.width * playerManager.progress, height: 3)
                     }
                 }
             }
         }
         .frame(width: 200)
         .padding()
-        .background(Color.blue.opacity(0.1))
+        .background(Color.green.opacity(0.2))
         .cornerRadius(16)
-        .onAppear(perform: setupAudioPlayer)
+        .onAppear {
+            playerManager.setupPlayer(with: audioData)
+        }
         .onDisappear {
-            audioPlayer?.stop()
-        }
-    }
-    
-    private func setupAudioPlayer() {
-        do {
-            audioPlayer = try AVAudioPlayer(data: audioData)
-            audioPlayer?.delegate = self
-            audioPlayer?.prepareToPlay()
-        } catch {
-            print("Audio player setup failed:", error)
-        }
-    }
-    
-    private func togglePlayback() {
-        if isPlaying {
-            audioPlayer?.pause()
-        } else {
-            audioPlayer?.play()
-            startProgressUpdates()
-        }
-        isPlaying.toggle()
-    }
-    
-    private func startProgressUpdates() {
-        Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
-            guard let player = audioPlayer else {
-                timer.invalidate()
-                return
-            }
-            
-            progress = player.currentTime / player.duration
-            
-            if !player.isPlaying {
-                timer.invalidate()
-                isPlaying = false
-                progress = 0
-            }
+            playerManager.stopPlayback()
         }
     }
     
@@ -87,6 +56,71 @@ struct AudioMessageView: View {
         let minutes = Int(time) / 60
         let seconds = Int(time) % 60
         return String(format: "%d:%02d", minutes, seconds)
+    }
+}
+
+class AudioPlayerManager: NSObject, ObservableObject {
+    private var audioPlayer: AVAudioPlayer?
+    @Published var isPlaying = false
+    @Published var progress: Double = 0
+    private var progressTimer: Timer?
+    
+    func setupPlayer(with data: Data) {
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+            
+            audioPlayer = try AVAudioPlayer(data: data)
+            audioPlayer?.delegate = self
+            audioPlayer?.prepareToPlay()
+        } catch {
+            print("Audio player setup failed:", error)
+        }
+    }
+    
+    func togglePlayback() {
+        if isPlaying {
+            audioPlayer?.pause()
+            stopProgressTimer()
+        } else {
+            audioPlayer?.play()
+            startProgressTimer()
+        }
+        isPlaying.toggle()
+    }
+    
+    func stopPlayback() {
+        audioPlayer?.stop()
+        stopProgressTimer()
+        isPlaying = false
+        progress = 0
+    }
+    
+    private func startProgressTimer() {
+        progressTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            guard let self = self,
+                  let player = self.audioPlayer else {
+                self?.stopProgressTimer()
+                return
+            }
+            
+            self.progress = player.currentTime / player.duration
+        }
+    }
+    
+    private func stopProgressTimer() {
+        progressTimer?.invalidate()
+        progressTimer = nil
+    }
+}
+
+extension AudioPlayerManager: AVAudioPlayerDelegate {
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        DispatchQueue.main.async {
+            self.isPlaying = false
+            self.progress = 0
+            self.stopProgressTimer()
+        }
     }
 }
 
@@ -165,6 +199,13 @@ struct VideoPlayerView: View {
     }
     
     private func createPlayer() -> AVPlayer {
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try AVAudioSession.sharedInstance().setActive(true, options: .notifyOthersOnDeactivation)
+        } catch {
+            print("Audio session ayarlama hatası:", error)
+        }
+        
         let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("temp_video.mp4")
         try? videoData.write(to: tempURL)
         return AVPlayer(url: tempURL)
